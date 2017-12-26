@@ -1,0 +1,154 @@
+package com.unicom.pay.lt.kl.client;
+
+import java.util.Map;
+
+import com.alibaba.fastjson.JSONObject;
+import com.lakala.config.Config;
+import com.lakala.dict.Dict;
+import com.lakala.util.HttpUtil;
+import com.lakala.util.SignUtil;
+import com.unicom.pay.lt.kl.util.ConfigurationManager;
+
+/**
+ * Filename:SKService.java Description:
+ * 
+ * @author litong
+ * @date 2017年8月22日 下午3:06:34
+ */
+public class KLService {
+	// 变量定义
+	private static KLService instance = null;
+	private String koala_rsa_public_key ;
+	private String koala_des_key ;
+	private String rsa_private_key ;
+	private String customerId = "";
+
+	/**
+	 * 单例模式
+	 * 
+	 * @return
+	 */
+	public static KLService getInstance() {
+		if (instance == null) {
+			synchronized (KLService.class) {
+				if (instance == null) {
+					instance = new KLService();
+				}
+			}
+		}
+		return instance;
+	}
+
+	/**
+	 * 构建类
+	 */
+	private KLService() {
+		customerId = ConfigurationManager.getProperty("kl.customerId");
+		koala_rsa_public_key = ConfigurationManager.getProperty("kl.koala_rsa_public_key");
+		koala_des_key = ConfigurationManager.getProperty("kl.koala_des_key");
+		rsa_private_key = ConfigurationManager.getProperty("kl.rsa_private_key");
+	}
+
+	public String getData(String url,JSONObject jsonObj) throws Exception {
+		customerId = ConfigurationManager.getProperty("kl.customerId");
+		koala_rsa_public_key = ConfigurationManager.getProperty("kl.koala_rsa_public_key");
+		koala_des_key = ConfigurationManager.getProperty("kl.koala_des_key");
+		rsa_private_key = ConfigurationManager.getProperty("kl.rsa_private_key");
+		System.out.println("请求消息体是:");
+		System.out.println(jsonObj);
+		//System.out.println(customerId+"|"+koala_rsa_public_key+"|"+koala_des_key+"|"+rsa_private_key);
+		//如果customerId不为空
+		if (jsonObj.getString("customerId")!=null && !"".equals(jsonObj.getString("customerId"))) {
+			customerId = jsonObj.getString("customerId");
+			koala_rsa_public_key = jsonObj.getString("koala_rsa_public_key");
+			rsa_private_key = jsonObj.getString("rsa_private_key");
+			koala_des_key = jsonObj.getString("koala_des_key");
+			
+			jsonObj.remove("customerId");
+			jsonObj.remove("koala_rsa_public_key");
+			jsonObj.remove("rsa_private_key");
+			jsonObj.remove("koala_des_key");
+		}
+		//System.out.println(customerId+"|"+koala_rsa_public_key+"|"+koala_des_key+"|"+rsa_private_key);
+		// 明文数据
+		@SuppressWarnings("unchecked")
+		Map<String, String> reqMap = JSONObject.toJavaObject(jsonObj, Map.class);
+		//reqMap.put("outOrderNo", "zx" + System.currentTimeMillis());// 上送流水号，保证唯一性
+		System.out.println("明文数据:" + reqMap);
+		// 签名后数据
+		Map<String, String> signMap = SignUtil.getSign(reqMap,koala_des_key,rsa_private_key);
+		signMap.put("customerId", customerId);
+		//调用考拉其他产品替换prdGrpId和prdId
+		signMap.put("prdGrpId",jsonObj.getString("prdGrpId"));
+		signMap.put("prdId",jsonObj.getString("prdId"));
+		signMap.put("outOrderNo",jsonObj.getString("outOrderNo"));
+		
+		System.out.println("签名后数据:" + signMap);
+		// 请求考拉api接口
+		String res = HttpUtil.buildRequest(url, signMap);
+		
+		String result = null;
+		if (res != null) {
+			Map<String, Object> resMap = JSONObject.parseObject(res);
+			String retCode = (String) resMap.get(Dict.RETCODE);
+			String retMsg = (String) resMap.get(Dict.RETMSG);
+			System.out.println("考拉响应码:" + retCode + ",考拉响应信息:" + retMsg);
+			if (Config.SUCC_RETCODE.equals(retCode)) {
+				Map<String, Object> retData = SignUtil.getSignVeryfy(resMap,koala_des_key,koala_rsa_public_key);
+				retData.put(Dict.RETCODE, retCode);
+				retData.put(Dict.RETMSG, retMsg);
+				result = retData.toString();
+				System.out.println("考拉返回明文数据:" + retData);
+			} else {
+				System.out.println("考拉响应失败");
+				result = resMap.toString();
+			}
+		} else {
+			System.out.println("调用考拉接口异常");
+		}
+
+		return result;
+	}
+
+	
+
+	public static void main(String args[]) {
+		String result = "null";
+		JSONObject json = new JSONObject();
+
+		
+		/*"张三", "", "130321198804010188", "6228480500861233451", ""*/
+		String url = "https://access.kaolazhengxin.com:8453/authentication.do?_t=json";
+		//String url = "http://1.202.150.5:9080/as/authentication.do?_t=json";
+		json.put("accountNo", "6228480500861233451");
+		json.put("name", "张三");
+		json.put("idCardCore", "130321198804010188");
+		json.put("outOrderNo", "00000000000000000000000");
+		json.put("prdGrpId", "bankCardQuery");
+		json.put("prdId", "qryBankCardBy3Element");
+		
+		/*<p.kl.customerId>201703150000000001</p.kl.customerId>
+		<p.kl.rsa_private_key>MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAKSag7TwM3gA03fQoJ75IaY6AmkVyOlZpTvi4EudH1fHMi8cStXbPhfYdjPK2bMCo9RxtnSadUju5CTzHS1+lHknJfY9L6OKPt/gzFzw/eHMerYeHNAPZTWqS6nR+0a9zZFRMFYyhhlcQ4z2Nj+/dj1waAI68EBb5Dmm4qe9KZ/BAgMBAAECgYAO7dS0PHTulWSYoVtwD7h1kx1U2pz2TSMnY1Rkh0OoenCaxT4kV1YyY3eVCvjju4GQax/ZQ4kPrFsU3tfuoGRm01t8l8X0NotYxCJZgCImOm9T/S29pZKljVIaJ5xfG96q9x7PWfva3stpNIv3UxPLcszv1KoZWy8GJkC2S4h2gQJBANTE8OC21uQ7xQM9v1my0M1B0cD9/OVt2YIkPNUqo9ZCgqdIply76qN2v7F5Sx3ldbZLiu8cGoDdyIYWNEXnI10CQQDGDEOVjq3KNXBWA905w2J1Kcy9hQjFWGNkzz5mT3xN+FRbnayzMl8wbr1ry0KKWK6iqk6SCJrGVfmv1ecNMSu1AkEAhAmLaghNJumogzBodOOxDA+SeW+k50PaPRb74VVKwwYXSnSdOOMs4zAoGZyp7u2ctPoASA5qrBn1/K/+1HpxyQJACOu0f6AVo+4USUuTQ27RmIVxe3fqlTkOARR0sxcRelGdOyM3DDtQnlXeomRdcu3br+gL8fgBQL3OqWTxK17zoQJAfpE+H98F5fUK4IL6L1VsPpp6UiUUtArgy40DDW/lwiZpvtuESQFaKl7/Ka0OFg9oL+aw4V/9qv452HHShldceQ==</p.kl.rsa_private_key>
+		<p.kl.koala_rsa_public_key>MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCd3C/wwY3FvACUsI4oVzS8i1yBClXubMIbLIC0Z7xpH/pbB//Dkbu+SgMUs7rLocb4Y7g72ZjO4A20910kUg7aJJa/ua2mEJbM/FLLARmSc1PPwt2rwmj5ScEUuedD8VkyLcMtrUe7W0xwL5xplmuL4Ln4BSQ4VIjNlFR29qYjDQIDAQAB</p.kl.koala_rsa_public_key>
+		<p.kl.koala_des_key>qC03Kj15</p.kl.koala_des_key>*/
+		
+		json.put("customerId","201703150000000001");
+		json.put("koala_rsa_public_key","MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCd3C/wwY3FvACUsI4oVzS8i1yBClXubMIbLIC0Z7xpH/pbB//Dkbu+SgMUs7rLocb4Y7g72ZjO4A20910kUg7aJJa/ua2mEJbM/FLLARmSc1PPwt2rwmj5ScEUuedD8VkyLcMtrUe7W0xwL5xplmuL4Ln4BSQ4VIjNlFR29qYjDQIDAQAB");
+		json.put("rsa_private_key","MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAKSag7TwM3gA03fQoJ75IaY6AmkVyOlZpTvi4EudH1fHMi8cStXbPhfYdjPK2bMCo9RxtnSadUju5CTzHS1+lHknJfY9L6OKPt/gzFzw/eHMerYeHNAPZTWqS6nR+0a9zZFRMFYyhhlcQ4z2Nj+/dj1waAI68EBb5Dmm4qe9KZ/BAgMBAAECgYAO7dS0PHTulWSYoVtwD7h1kx1U2pz2TSMnY1Rkh0OoenCaxT4kV1YyY3eVCvjju4GQax/ZQ4kPrFsU3tfuoGRm01t8l8X0NotYxCJZgCImOm9T/S29pZKljVIaJ5xfG96q9x7PWfva3stpNIv3UxPLcszv1KoZWy8GJkC2S4h2gQJBANTE8OC21uQ7xQM9v1my0M1B0cD9/OVt2YIkPNUqo9ZCgqdIply76qN2v7F5Sx3ldbZLiu8cGoDdyIYWNEXnI10CQQDGDEOVjq3KNXBWA905w2J1Kcy9hQjFWGNkzz5mT3xN+FRbnayzMl8wbr1ry0KKWK6iqk6SCJrGVfmv1ecNMSu1AkEAhAmLaghNJumogzBodOOxDA+SeW+k50PaPRb74VVKwwYXSnSdOOMs4zAoGZyp7u2ctPoASA5qrBn1/K/+1HpxyQJACOu0f6AVo+4USUuTQ27RmIVxe3fqlTkOARR0sxcRelGdOyM3DDtQnlXeomRdcu3br+gL8fgBQL3OqWTxK17zoQJAfpE+H98F5fUK4IL6L1VsPpp6UiUUtArgy40DDW/lwiZpvtuESQFaKl7/Ka0OFg9oL+aw4V/9qv452HHShldceQ==");
+		json.put("koala_des_key","qC03Kj15");
+		
+		/*json.put("customerId","201711150000000001");
+		json.put("koala_rsa_public_key","MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCngwB8AZP1HRQLurF9NI8MyneTe5CJvF7RyDNkq0VekWi5yfs3Qf4A5O2GbSseH2+7nC2BrloKrHQ3R09J5GUXAaUwtGGa5b2qYNmU0Iqr5Dp8eYJMGe+cJzwn3wdpUUm7BRbWSo3OBEfZ8JIicY5NKfIqK9XHnvJq0E5RcpH72QIDAQAB");
+		json.put("rsa_private_key","MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQChI1aU5DQRr105exkCB1sMI1EicgNNkSpWNLaMsGV7KIzrM4pvVZiat3Wyk/q/bNNw0/wEIscJsyaW6ZJk2Ju0EpzRi8oin8j28D7DO3Bfuhm87D+g05g0HkONCvZicEg/ZXWACG25v+hfw4mBwByezMRTS4JIWO8jNvIzrHb+gsgmci8RsdT7e2b92F5CnjaY8yRCCumF2VePFyPcNC3iyF49TDTkYSVKuwB6/cjX90m1x0B/wB+AU4GtetGoKbWIG+dD8wh58rNU5sWDIBD69NIBDz36px3ScXfVS5djp1Qrg3SFy+Uthydi6j5OdXYAcLLfHOcy0LTD/QYtmrm5AgMBAAECggEBAJC2tOZIv/51+IpL5ByvUHRpL095B0BdM6Fx+9QEA0+FDnGYuyXbwI6KXrh/L31FFetJZhasyQYMD4cOw3uwEL26zX1fRqyrxYcIIcWiFvzRnJXPsiEUhqef2ljL1JR5dFkDHHBcoXZlRCLk8BRH3Sw8h8CqmpmwzStaCFCh/cf5bUI2JC8TSRuoKdZh1Owiwr/hIuZ6683m9T1BmhS5RpO+uU3HxqCX9HG9JIj9i5Vza5EBGAsD1HhBV/E6smCokpL8bvNjW5YKxMJwe/7qggkJNB8+QXA5LOb0gbRh512PgRrhWMEtIM5UZkKP3UTOFQvuyZEDqzyKhqgl/pcD6tECgYEAzbAASZ4biAEc8yL81qDBUQlGNXRpNpB76gw0j3gf4ah8riQoOk/3TNzqVPcKoGwLE2LJlwtJqXNxJaPpFCExE2LeGrxhXNxnL7t9zyzaUj/p+uY2UT8b6vmOmpXwSw+E/Zz3BCIm8MfC3jvOmsTf1847kzRXVfC3W43ppQQy/f0CgYEAyI2uxCRT+VdbNKZLguipVoP/Xs4g1Z3CAorfGligHKgotFY4d7kA5Cb7BSZdd2wJKID/TS8ClDfgMDERo8xZyIpoL3J+hhywUhMc7j/exS7WtePUHZR8l6Waf5J+wsyK6BBtg/bUFPTBqRGTyDokqDaIGyqK2QUlU4KrAmy4eW0CgYEAqVzRb8yjKMKZ3s2hWOy3IQ285Mj81TP1BEuWf8fOoJWGTDFzekhb/cstnFZqRpuQJx9BlIBz3/YxZWfoxG1sJmVTMrqIhNjqkhAU0KFDB1SfSbuDYDTRvRJNzJXHbVbTD6zObHXekIY7u5eNUDzpf53NyjDf9OCnadiZWQnzHtUCgYA5qmOCCmAK5c9XyCkWLwfh1HptLB/MzFuol32m+aywELoDgHckFZHoCD1NMcbWO742Y0EFVGsNazOPJ8zGqE94ljN20RkIPt+D+fLrnnnTgLBEBIpNJxDcGcXewKSqJl4ac/7JXwOEMwwsLN2tSOqZY3SnOwhJdm1RIdVCETjJ0QKBgDKJYhc+oKPA4tmUwypuoJxBIjFIb41uEBBmZ11iimAavf7rSjY7xr+keRwGZUPSVBHgKHn9BFIG5plaXiqfO+1BFR77Lu8EQoDkugeKf0GPQwg+mo1/C6HBNe6PDHzr6VM0NbQ8ueulNQpRb4mKEfoatSfBNhD5PUMeFfB6sOyB");
+		json.put("koala_des_key","j3DQt4sh");*/
+		
+		KLService sks = KLService.getInstance();
+		try {
+			result = sks.getData(url,json);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println(result);
+	}
+}

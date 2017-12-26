@@ -1,0 +1,126 @@
+package com.unicom.pay.lt.kl.client;
+
+import java.util.Map;
+
+import com.alibaba.fastjson.JSONObject;
+import com.lakala.config.Config;
+import com.lakala.dict.Dict;
+import com.lakala.util.HttpUtil;
+import com.lakala.util.SignUtil;
+import com.unicom.pay.lt.kl.util.ConfigurationManager;
+
+/**
+ * Filename:SKService.java Description:
+ * 
+ * @author litong
+ * @date 2017年8月22日 下午3:06:34
+ */
+public class KLService {
+	// 变量定义
+	private static KLService instance = null;
+	private String customerId = "";
+
+	/**
+	 * 单例模式
+	 * 
+	 * @return
+	 */
+	public static KLService getInstance() {
+		if (instance == null) {
+			synchronized (KLService.class) {
+				if (instance == null) {
+					instance = new KLService();
+				}
+			}
+		}
+		return instance;
+	}
+
+	/**
+	 * 构建类
+	 */
+	private KLService() {
+		customerId = ConfigurationManager.getProperty("kl.customerId");
+	}
+
+	public String getData(String url,JSONObject jsonObj) throws Exception {
+		
+		System.out.println("请求消息体是:");
+		System.out.println(jsonObj);
+
+		// 明文数据
+		@SuppressWarnings("unchecked")
+		Map<String, String> reqMap = JSONObject.toJavaObject(jsonObj, Map.class);
+		//reqMap.put("outOrderNo", "zx" + System.currentTimeMillis());// 上送流水号，保证唯一性
+		System.out.println("明文数据:" + reqMap);
+		// 签名后数据
+		Map<String, String> signMap = SignUtil.getSign(reqMap);
+		signMap.put("customerId", customerId);
+		//调用考拉其他产品替换prdGrpId和prdId
+		signMap.put("prdGrpId",jsonObj.getString("prdGrpId"));
+		signMap.put("prdId",jsonObj.getString("prdId"));
+		signMap.put("outOrderNo",jsonObj.getString("outOrderNo"));
+		
+		System.out.println("签名后数据:" + signMap);
+		// 请求考拉api接口
+		String res = HttpUtil.buildRequest(url, signMap);
+		
+		String result = null;
+		if (res != null) {
+			Map<String, Object> resMap = JSONObject.parseObject(res);
+			String retCode = (String) resMap.get(Dict.RETCODE);
+			String retMsg = (String) resMap.get(Dict.RETMSG);
+			System.out.println("考拉响应码:" + retCode + ",考拉响应信息:" + retMsg);
+			if (Config.SUCC_RETCODE.equals(retCode)) {
+				Map<String, Object> retData = SignUtil.getSignVeryfy(resMap);
+				retData.put(Dict.RETCODE, retCode);
+				retData.put(Dict.RETMSG, retMsg);
+				result = retData.toString();
+				System.out.println("考拉返回明文数据:" + retData);
+			} else {
+				System.out.println("考拉响应失败");
+				result = resMap.toString();
+			}
+		} else {
+			System.out.println("调用考拉接口异常");
+		}
+
+		return result;
+	}
+
+	
+
+	public static void main(String args[]) {
+		String result = "null";
+		JSONObject json = new JSONObject();
+
+		
+
+		String url = "http://1.202.150.5:9080/as/authentication.do?_t=json";
+		
+		
+		json.put("name", "吴林");
+		json.put("idCardCode", "51372219890820043X");
+		json.put("imonth", "12");
+		//json.put("mobilePhone", "18614098788");
+		json.put("prdGrpId","baseInfoQuery");
+		json.put("prdId","qryAirlinePassengerInfo");
+
+		/*json.put("idCardName", "吴冬芳");
+		json.put("idCardCode", "51372219890920053X");
+		//json.put("mobilePhone", "18614098788");
+		json.put("prdGrpId","identityQuery");
+		json.put("prdId","validateIDCard");
+		*/
+		
+		
+		KLService sks = KLService.getInstance();
+		try {
+			result = sks.getData(url,json);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println(result);
+	}
+}
